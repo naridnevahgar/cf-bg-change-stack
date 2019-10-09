@@ -3,8 +3,8 @@
 cf plugin for zero downtime application stack change, highly inspired by [cf-plugin-bg-restage](https://github.com/CAFxX/cf-plugin-bg-restage) & [stack auditor](https://github.com/cloudfoundry/stack-auditor).
 
 Use this plugin when your CF environment doesn't support ZDT restart. 
-The `stack auditor` plugin does a restart with down time, when the CAPI version doesn't support ZDT endpoint. 
-This plugin attempts to support such CF environments by leveraging `bg-restage` combined with stack change logics. 
+When the CAPI doesn't support ZDT, the `stack auditor` plugin does a restart with down time, after changing stack.
+This plugin attempts to do a zero downtime stack change by leveraging `bg-restage` logics & `stack auditor` logics. 
 
 ## Installation
 
