@@ -15,6 +15,15 @@ cd cf-bg-change-stack
 ./bin/install_plugin.sh
 ```
 
+### Platform specific binary
+
+To generate platform specific binary, use the `build-all` script available under `build` directory. 
+
+```
+cd cf-bg-change-stack
+./bin/build-all.sh
+```
+
 ## Usage
 
 ```
