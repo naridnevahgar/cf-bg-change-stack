@@ -6,4 +6,4 @@ echo -e "\nGenerating Binary..."
 
 CURRENTDIR=`pwd`
 
-go build -o $CURRENTDIR/out/cf-plugin-bg-restage
+go build -o $CURRENTDIR/out/cf-bg-change-stack

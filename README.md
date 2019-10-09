@@ -1,25 +1,24 @@
-# bg-restage
+# bg-change-stack
 
-cf plugin for zero downtime application restaging, highly inspired by [autopilot](https://github.com/contraband/autopilot).
+cf plugin for zero downtime application stack change, highly inspired by [cf-plugin-bg-restage](https://github.com/CAFxX/cf-plugin-bg-restage) & [stack auditor](https://github.com/cloudfoundry/stack-auditor).
 
-This is mostly for those who don't want to redeploy an app with source code. 
-It was initially created to restage automatically all apps in a Cloud Foundry 
-when a new buildpack as been released with security patch.
+Use this plugin when your CF environment doesn't support ZDT restart. 
+The `stack auditor` plugin does a restart with down time, when the CAPI version doesn't support ZDT endpoint. 
+This plugin attempts to support such CF environments by leveraging `bg-restage` combined with stack change logics. 
 
 ## Installation
 
-Download the latest version from the [releases][releases] page and make it executable.
-
 ```
-$ cf install-plugin path/to/downloaded/binary
+git clone https://github.com/naridnevahgar/cf-bg-change-stack.git
+cd cf-bg-change-stack
+./bin/build.sh
+./bin/install_plugin.sh
 ```
-
-[releases]: https://github.com/orange-cloudfoundry/cf-plugin-bg-restage/releases
 
 ## Usage
 
 ```
-$ cf bg-restage application-to-restage
+$ cf bg-change-stack <app name> <new stack name>
 ```
 
 ## Method
@@ -36,5 +35,9 @@ $ cf bg-restage application-to-restage
 4. Bits will be copied from old app to the new app to put real code inside the new app.
 
 5. The new app will be restarted which will restage the app with the real code from old app.
+
+6. The new app's stack will be changed using the `/v3/apps` endpoint.
+
+7. The new app will be restarted again for the new stack to take effect.
 
 6. The old app will be removed and all traffic will be on the new app.

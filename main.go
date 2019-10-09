@@ -1,21 +1,21 @@
 package main
 
 import (
-	"code.cloudfoundry.org/cli/cf/terminal"
-	"code.cloudfoundry.org/cli/plugin"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/contraband/autopilot/rewind"
 	"io/ioutil"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"code.cloudfoundry.org/cli/plugin"
+	"github.com/contraband/autopilot/rewind"
 )
 
-type BgRestagePlugin struct{}
+type BgChangeStackPlugin struct{}
 type Job struct {
 	Metadata struct {
 		GUID      string    `json:"guid"`
@@ -37,7 +37,7 @@ type Job struct {
 func venerableAppName(appName string) string {
 	return fmt.Sprintf("%s-venerable", appName)
 }
-func restageActions(appRepo *ApplicationRepo, appName string) []rewind.Action {
+func changeStackActions(appRepo *ApplicationRepo, appName string, newStackName string) []rewind.Action {
 	return []rewind.Action{
 		// create manifest
 		{
@@ -79,13 +79,6 @@ func restageActions(appRepo *ApplicationRepo, appName string) []rewind.Action {
 				if err != nil {
 					return err
 				}
-				pb := NewIndeterminateProgressBar(
-					os.Stdout,
-					fmt.Sprintf("copying bits from %s to new %s",
-						terminal.EntityNameColor(venerableAppName(appName)),
-						terminal.EntityNameColor(appName),
-					),
-				)
 				for {
 					job, err := appRepo.GetJob(job.Entity.GUID)
 					if err != nil {
@@ -102,7 +95,6 @@ func restageActions(appRepo *ApplicationRepo, appName string) []rewind.Action {
 							job.Entity.ErrorDetails.Code,
 						)
 					}
-					pb.Next()
 				}
 				return nil
 			},
@@ -128,6 +120,32 @@ func restageActions(appRepo *ApplicationRepo, appName string) []rewind.Action {
 				return appRepo.RenameApplication(venerableAppName(appName), appName)
 			},
 		},
+		// change-stack
+		{
+			Forward: func() error {
+				fmt.Println()
+				newAppGuid, err := appRepo.GetAppGuid(appName)
+				if err != nil {
+					return err
+				}
+
+				return appRepo.AssignTargetStack(newAppGuid, newStackName)
+			},
+		},
+		// Restage again for stack change to take effect
+		{
+			Forward: func() error {
+				fmt.Println()
+				return appRepo.RestageApplication(appName)
+			},
+			ReversePrevious: func() error {
+				// If the app cannot start with new stack, we'll have a lingering application
+				// We delete this application so that the rename can succeed
+				appRepo.DeleteApplication(appName)
+
+				return appRepo.RenameApplication(venerableAppName(appName), appName)
+			},
+		},
 		// delete
 		{
 			Forward: func() error {
@@ -143,34 +161,42 @@ func fatalIf(err error) {
 	}
 }
 func main() {
-	plugin.Start(&BgRestagePlugin{})
-}
-func (plugin BgRestagePlugin) Run(cliConnection plugin.CliConnection, args []string) {
-	appRepo, err := NewApplicationRepo(cliConnection)
-	fatalIf(err)
-	defer appRepo.DeleteDir()
-	if len(args) < 2 {
-		fatalIf(fmt.Errorf("Usage: cf bg-restage application-to-restage"))
-	}
-	appName := args[1]
-	actionList := restageActions(appRepo, appName)
-	actions := rewind.Actions{
-		Actions:              actionList,
-		RewindFailureMessage: "Oh no. Something's gone wrong. I've tried to roll back but you should check to see if everything is OK.",
-	}
-	err = actions.Execute()
-	fatalIf(err)
-
-	fmt.Println()
-	fmt.Println("Your application has been restaged with no downtime !")
-	fmt.Println()
-
-	_ = appRepo.ListApplications()
+	plugin.Start(&BgChangeStackPlugin{})
 }
 
-func (BgRestagePlugin) GetMetadata() plugin.PluginMetadata {
+func (plugin BgChangeStackPlugin) Run(cliConnection plugin.CliConnection, args []string) {
+
+	switch args[0] {
+	case "bg-change-stack":
+		appRepo, err := NewApplicationRepo(cliConnection)
+		fatalIf(err)
+		defer appRepo.DeleteDir()
+		if len(args) < 3 {
+			fatalIf(fmt.Errorf("Usage: cf bg-change-stack <app name> <new stack name>"))
+		}
+
+		if args[0] == "bg-change-stack" {
+			appName := args[1]
+			actionList := changeStackActions(appRepo, appName, args[2])
+			actions := rewind.Actions{
+				Actions:              actionList,
+				RewindFailureMessage: "Oh no. Something's gone wrong. I've tried to roll back but you should check to see if everything is OK.",
+			}
+			err = actions.Execute()
+			fatalIf(err)
+
+			fmt.Println()
+			fmt.Println("application stack has been changed with no downtime !")
+			fmt.Println()
+		}
+	case "CLI-MESSAGE-UNINSTALL":
+		os.Exit(0)
+	}
+}
+
+func (BgChangeStackPlugin) GetMetadata() plugin.PluginMetadata {
 	return plugin.PluginMetadata{
-		Name: "bg-restage",
+		Name: "bg-change-stack",
 		Version: plugin.VersionType{
 			Major: 1,
 			Minor: 0,
@@ -178,10 +204,10 @@ func (BgRestagePlugin) GetMetadata() plugin.PluginMetadata {
 		},
 		Commands: []plugin.Command{
 			{
-				Name:     "bg-restage",
-				HelpText: "Perform a zero-downtime restage of an application over the top of an old one",
+				Name:     "bg-change-stack",
+				HelpText: "Perform a zero-downtime stack change of an application over the top of an old one",
 				UsageDetails: plugin.Usage{
-					Usage: "$ cf bg-restage application-to-restage",
+					Usage: "$ cf bg-change-stack <app name> <new stack name>",
 				},
 			},
 		},
@@ -194,7 +220,7 @@ type ApplicationRepo struct {
 }
 
 func NewApplicationRepo(conn plugin.CliConnection) (*ApplicationRepo, error) {
-	dir, err := ioutil.TempDir("", "bg-restage")
+	dir, err := ioutil.TempDir("", "bg-change-stack")
 	if err != nil {
 		return nil, err
 	}
@@ -203,6 +229,7 @@ func NewApplicationRepo(conn plugin.CliConnection) (*ApplicationRepo, error) {
 		dir:  dir,
 	}, nil
 }
+
 func (repo *ApplicationRepo) DeleteDir() error {
 	return os.RemoveAll(repo.dir)
 }
@@ -211,9 +238,11 @@ func (repo *ApplicationRepo) CreateManifest(name string) error {
 	_, err := repo.conn.CliCommand("create-app-manifest", name, "-p", repo.manifestFilePath())
 	return err
 }
+
 func (repo *ApplicationRepo) manifestFilePath() string {
 	return filepath.Join(repo.dir, "manifest.yml")
 }
+
 func (repo *ApplicationRepo) TouchDir() error {
 	f, err := os.Create(repo.dir + "/nofile")
 	if err != nil {
@@ -234,11 +263,19 @@ func (repo *ApplicationRepo) PushApplication(appName string) error {
 	_, err := repo.conn.CliCommand(args...)
 	return err
 }
+
 func (repo *ApplicationRepo) RestartApplication(appName string) error {
 	args := []string{"restart", appName}
 	_, err := repo.conn.CliCommand(args...)
 	return err
 }
+
+func (repo *ApplicationRepo) RestageApplication(appName string) error {
+	args := []string{"restage", appName}
+	_, err := repo.conn.CliCommand(args...)
+	return err
+}
+
 func (repo *ApplicationRepo) DeleteApplication(appName string) error {
 	_, err := repo.conn.CliCommand("delete", appName, "-f")
 	return err
@@ -269,6 +306,18 @@ func (repo *ApplicationRepo) CopyBits(oldAppGuid, newAppGuid string) (Job, error
 	}
 	return job, nil
 }
+
+func (repo *ApplicationRepo) AssignTargetStack(appGuid, stackName string) error {
+	_, err := repo.conn.CliCommandWithoutTerminalOutput(
+		"curl",
+		"-X",
+		"POST",
+		"/v3/apps/"+appGuid, "-X", "PATCH", `-d={"lifecycle":{"type":"buildpack", "data": {"stack":"`+stackName+`"} } }`,
+	)
+
+	return err
+}
+
 func (repo *ApplicationRepo) GetJob(jobGuid string) (Job, error) {
 	respSlice, err := repo.conn.CliCommandWithoutTerminalOutput(
 		"curl",
@@ -282,6 +331,7 @@ func (repo *ApplicationRepo) GetJob(jobGuid string) (Job, error) {
 	}
 	return job, nil
 }
+
 func (repo *ApplicationRepo) GetAppGuid(name string) (string, error) {
 	d, err := repo.conn.CliCommandWithoutTerminalOutput("app", name, "--guid")
 	if err != nil {

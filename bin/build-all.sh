@@ -4,7 +4,7 @@ set -e
 set -x
 
 OUTDIR=$(dirname $0)/../out
-BINARYNAME=cf-plugin-bg-restage
+BINARYNAME=cf-bg-change-stack
 
 GOARCH=amd64 GOOS=darwin $(dirname $0)/build  && cp $OUTDIR/$BINARYNAME "$OUTDIR/${BINARYNAME}_darwin_amd64"
 GOARCH=amd64 GOOS=windows $(dirname $0)/build && cp $OUTDIR/$BINARYNAME "$OUTDIR/${BINARYNAME}_windows_amd64.exe"
